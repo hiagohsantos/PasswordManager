@@ -13,24 +13,32 @@ import threading
 import appdirs
 import secrets
 import string
+from translations import _t, set_language, languages_list
+from typing import Union
 
 load_dotenv()
 
 
 class PasswordManager:
-    def __init__(self, page):
+    def __init__(self, page: ft.Page) -> None:
+        set_language("pt_BR")
+
         self.page = page
-        self.password_list: list[tuple] = []
-        self.page.title = "Password Manager"
+        self.page.title = _t("Password Manager")
         self.page.window_center()
         self.page.window_height = 700
         self.page.window_width = 800
+
         self.app_data_path = appdirs.user_data_dir(appname="pManager")
         os.makedirs(self.app_data_path, exist_ok=True)
         self.user_data_path = os.path.join(self.app_data_path, "data.bin")
+
+        self.password_list: list[tuple] = []
+
         # self.page.window_resizable = False
+        self.master_user_pin = None
+        self.master_key = None
         self.run()
-        self.verify_data()
 
     def generate_key_from_pin(self, pin: str) -> bytes:
         pin_bytes = pin.encode()
@@ -47,18 +55,35 @@ class PasswordManager:
 
         return base64.urlsafe_b64encode(key)
 
-    def verify_data(self):
-        self.master_key = self.generate_key_from_pin("122")
+    def verify_data(self, verification_type: int = 0) -> bool:
+        # verification_type = 0 -> verifica se o arquivo existe
+        # verification_type != 0 -> verifica apenas o token
 
-        print(self.app_data_path)
+        try:
+            if verification_type == 0:
+                if os.path.exists(
+                    self.user_data_path
+                ):  # Arquivo de dados existe, abre modal para inserir o Pin
+                    self.input_pin_modal(None)
 
-        status, data = self.load_encrypted_data()
-        if status:
-            self.password_list = data
-            self.password_components()
-        else:
-            print(data)
-            ## Modal de Aviso
+                else:  # Nao existe dados salvos, abre modal para criar pin
+                    self.create_pin_modal(None)
+
+            # Os modais inserem o valor no self.master_user_pin
+
+            if self.master_user_pin:
+                self.master_key = self.generate_key_from_pin(self.master_user_pin)
+                data = self.load_encrypted_data()
+
+                if data:
+                    self.password_list = data
+                    self.password_components()
+                    return True
+
+                else:
+                    return False
+        except:
+            return False
 
     def encrypt_data(self, data):
         cipher_suite = Fernet(self.master_key)
@@ -70,6 +95,15 @@ class PasswordManager:
         decrypted_data = json.loads(cipher_suite.decrypt(encrypted_data).decode())
         return decrypted_data
 
+    def delete_data(self, e) -> None:
+        if os.path.exists(self.user_data_path):
+            os.remove(self.user_data_path)
+            self.alert_modal(None, "Sucesso", "Dados Excluidos!")
+        else:
+            self.alert_modal(None, "Falha", "Não foi possivel excluir os dados.")
+
+        self.verify_data()
+
     def save_encrypted_data(self):
         print(json.dumps(self.password_list, indent=2))
         encrypted_data = self.encrypt_data(self.password_list)
@@ -78,7 +112,7 @@ class PasswordManager:
         with open(self.user_data_path, "wb") as file:
             file.write(encoded_data)
 
-    def load_encrypted_data(self) -> tuple:
+    def load_encrypted_data(self) -> Union[tuple, bool]:
         try:
             with open(self.user_data_path, "rb") as file:
                 # Decode de volta para bytes antes de decifrar
@@ -86,14 +120,19 @@ class PasswordManager:
             decrypted_data = self.decrypt_data(encoded_data)
             decrypted_data = [tuple(sublist) for sublist in decrypted_data]
             # print(json.dumps(decrypted_data, indent=4))
-            return True, decrypted_data
+            return decrypted_data
 
         except FileNotFoundError:
-            return False, "Arquivo não encontrado."
+            print("Arquivo não encontrado.")
+            return False
+
         except cryptography.fernet.InvalidToken:
-            return False, f"Token inválido"
+            print("Token inválido")
+            return False
+
         except Exception as e:
-            return False, f"Houve um problema ao carregar dados. {e}"
+            print(f"Houve um problema ao carregar dados. {e}")
+            return False
 
     def generate_random_password(self, length: int) -> None:
         characters = string.ascii_letters + string.digits + string.punctuation
@@ -102,6 +141,11 @@ class PasswordManager:
         self.in_password_value.update()
 
     def password_components(self) -> list[ft.Row]:
+        def change_icon_color(e):
+            print(1)
+            e.control.icon_color = ft.colors.RED_400
+            self.page.update()
+
         try:
             password_list: list[ft.Row] = []
             for name, password in self.password_list:
@@ -120,16 +164,17 @@ class PasswordManager:
                                     ft.IconButton(
                                         icon=ft.icons.CONTENT_COPY,
                                         icon_size=20,
-                                        tooltip="Copy",
+                                        tooltip=_t("Copy"),
                                         data=password,
                                         on_click=self.copy_clipboard,
                                     ),
                                     ft.IconButton(
                                         icon=ft.icons.DELETE_FOREVER_ROUNDED,
                                         icon_size=20,
-                                        tooltip="Delete",
+                                        tooltip=_t("Delete"),
                                         on_click=self.delete_password,
                                         data=name,
+                                        on_blur=lambda e: print(e),
                                     ),
                                 ]
                             ),
@@ -163,6 +208,7 @@ class PasswordManager:
                 break
 
         self.password_components()
+        self.save_encrypted_data()
         self.page.update()
 
     def add_password(self, e) -> None:
@@ -170,49 +216,187 @@ class PasswordManager:
             name: str = self.in_password_name.value
             value: str = self.in_password_value.value
 
+            self.in_password_name.value = None
+            self.in_password_value.value = None
+
             if name and value:
 
                 if not any(key == name for key, _password in self.password_list):
                     self.password_list.append((name, value))
                     self.password_components()
                 else:
-                    # self.open_dlg(None)
                     self.alert_modal(
-                        None, "Falha", "O identificador informado já existe."
+                        None, _t("Error"), _t("The identifier provided already exists.")
                     )
                     raise ValueError("Identificador existente")
+
                 self.save_encrypted_data()
+            else:
+                if not name:
+                    self.in_password_name.error_text = "Campo obrigatório"
+
+                if not name:
+                    self.in_password_value.error_text = "Campo obrigatório"
+                self.page.update()
+
         except Exception as e:
             print(e)
 
     def alert_modal(self, e, title: str, text: str):
-        dlg_modal = ft.AlertDialog(
+        self.dlg_modal = ft.AlertDialog(
             title=ft.Text(title),
             content=ft.Text(text),
             actions_alignment=ft.MainAxisAlignment.END,
             on_dismiss=lambda e: print("Modal dialog dismissed!"),
         )
-        self.page.dialog = dlg_modal
-        dlg_modal.open = True
+        self.page.dialog = self.dlg_modal
+        self.dlg_modal.open = True
+        self.page.update()
+
+    def clear_error(self, e):
+        e.control.error_text = None
+        self.page.update()
+
+    def input_pin_modal(self, e) -> None:
+        error_count = 0
+
+        def set_pin(e):
+            nonlocal error_count
+            self.master_user_pin = in_pin.value
+            if not self.verify_data(verification_type=1):
+                in_pin.error_text = "Pin Inválido"
+
+                if error_count > 2:
+                    bnt_delete_data.disabled = False
+                error_count += 1
+
+            else:
+                self.close_dlg(None)
+
+            self.page.update()
+
+        in_pin = ft.TextField(
+            label=_t("Master key"),
+            password=True,
+            can_reveal_password=True,
+            on_change=self.clear_error,
+        )
+        bnt_delete_data = ft.TextButton(
+            "Apagar dados",
+            on_click=self.confirm_delete_modal,
+            disabled=True,
+        )
+
+        self.dlg_modal = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(_t("Pin")),
+            content=in_pin,
+            actions=[
+                bnt_delete_data,
+                ft.TextButton("Ok", on_click=set_pin),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+            on_dismiss=lambda e: print("Modal dialog dismissed!"),
+        )
+        self.page.dialog = self.dlg_modal
+        self.dlg_modal.open = True
+        self.page.update()
+
+    def confirm_delete_modal(self, e) -> None:
+        self.dlg_modal = ft.AlertDialog(
+            title=ft.Text("Atenção"),
+            content=ft.Text("Deseja prosseguir?"),
+            actions=[
+                ft.TextButton("Sim", on_click=self.delete_data),
+                ft.TextButton("Não", on_click=self.close_dlg),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+            on_dismiss=lambda e: print("Modal dialog dismissed!"),
+        )
+        self.page.dialog = self.dlg_modal
+        self.dlg_modal.open = True
+        self.page.update()
+
+    def create_pin_modal(self, e) -> None:
+
+        def verify_pin(e):
+            if not in_new_pin.value:
+                in_new_pin.error_text = "Campo obrigatório"
+
+            elif not in_confirm_pin.value:
+                in_confirm_pin.error_text = "Campo obrigatório"
+
+            elif in_new_pin.value == in_confirm_pin.value:
+                self.close_dlg(None)
+                self.master_user_pin = in_new_pin.value
+                self.verify_data(verification_type=1)
+
+            else:
+                in_new_pin.error_text = "Pins diferentes"
+                in_confirm_pin.error_text = "Pins diferentes"
+
+            self.page.update()
+
+        in_new_pin = ft.TextField(
+            label=_t("Master pin"),
+            password=True,
+            can_reveal_password=True,
+            on_change=self.clear_error,
+        )
+
+        in_confirm_pin = ft.TextField(
+            label=_t("Confirm pin"),
+            password=True,
+            can_reveal_password=True,
+            on_change=self.clear_error,
+        )
+        self.dlg_modal = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(_t("Create Pin")),
+            content=ft.Column(controls=[in_new_pin, in_confirm_pin], height=120),
+            actions=[
+                ft.TextButton("Create", on_click=verify_pin),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+            on_dismiss=lambda e: print("Modal dialog dismissed!"),
+        )
+        self.page.dialog = self.dlg_modal
+        self.dlg_modal.open = True
         self.page.update()
 
     def close_dlg(self, e):
         self.dlg_modal.open = False
         self.page.update()
 
-    def open_dlg(self, e):
-        self.page.dialog = self.dlg_modal
-        self.dlg_modal.open = True
-        self.page.update()
+    def update_language(self, e):
+        set_language(e.control.value)
+        self.run()
+
+        # Refresh language dropdown text
+        self.language_dropdown.value = e.control.value
+        self.language_dropdown.update()
+
+        # Refresh password list
+        self.password_components()
 
     def place_components(self) -> None:
         try:
+            self.language_dropdown = ft.Dropdown(
+                options=[ft.dropdown.Option(language) for language in languages_list()],
+                height=40,
+                width=100,
+                dense=True,
+                autofocus=False,
+                text_size=13,
+                scale=0.8,
+                on_change=self.update_language,
+            )
             self.header = ft.Row(
                 [
-                    ft.Container(),
+                    self.language_dropdown,
                     ft.Container(
                         content=ft.Text(
-                            value="Password Manager",
+                            value=_t("Password Manager"),
                             size=20,
                             height=40,
                             weight=ft.FontWeight.W_800,
@@ -224,7 +408,7 @@ class PasswordManager:
                             bnt_tema := ft.IconButton(
                                 icon=ft.icons.LIGHT_MODE_OUTLINED,
                                 icon_size=20,
-                                tooltip="Modo Claro",
+                                tooltip=_t("Light Mode"),
                             )
                         ),
                         alignment=ft.alignment.center_right,
@@ -236,7 +420,7 @@ class PasswordManager:
             self.out_passwords = ft.ListView(
                 controls=[
                     ft.Row(
-                        [ft.Text(value="Nenhuma senha registrada")],
+                        [ft.Text(value=_t("No password registered"))],
                         alignment=ft.MainAxisAlignment.CENTER,
                     )
                 ],
@@ -247,15 +431,17 @@ class PasswordManager:
             )
 
             self.in_password_name = ft.TextField(
-                label="Identifier",
+                label=_t("Identifier"),
                 icon=ft.icons.ALTERNATE_EMAIL,
                 hint_style=ft.TextStyle(size=11, italic=True),
+                on_change=self.clear_error,
             )
             self.in_password_value = ft.TextField(
-                label="Password Key",
+                label=_t("Password"),
                 icon=ft.icons.ALTERNATE_EMAIL,
-                hint_text="Master Key",
+                hint_text=_t("Master Key"),
                 hint_style=ft.TextStyle(size=11, italic=True),
+                on_change=self.clear_error,
             )
             self.passwords_container = ft.Container(
                 content=self.out_passwords,
@@ -265,10 +451,10 @@ class PasswordManager:
             )
 
             self.bnt_add_password = ft.ElevatedButton(
-                text="Add", on_click=self.add_password
+                text=_t("Add"), on_click=self.add_password
             )
             self.bnt_generate_random_password = ft.ElevatedButton(
-                text="Generate Random",
+                text=_t("Generate Random"),
                 on_click=lambda e: self.generate_random_password(10),
             )
             self.out_botton_buttons = ft.Row(
@@ -286,9 +472,10 @@ class PasswordManager:
         except Exception as e:
             print(e)
 
-    def run(self):
-
+    def run(self) -> None:
+        self.page.clean()
         self.place_components()
+        self.verify_data()
 
 
 if __name__ == "__main__":
