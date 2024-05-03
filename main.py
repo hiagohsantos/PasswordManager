@@ -40,6 +40,25 @@ class PasswordManager:
         self.master_key = None
         self.run()
 
+    def theme_changed(self, e):
+        if self.page.theme_mode == ft.ThemeMode.DARK:
+            self.page.theme_mode = ft.ThemeMode.LIGHT
+            self.bnt_theme.icon = ft.icons.DARK_MODE_OUTLINED
+            self.bnt_theme.tooltip = "Modo Escuro"
+        else:
+            self.page.theme_mode = ft.ThemeMode.DARK
+            self.bnt_theme.icon = ft.icons.LIGHT_MODE_OUTLINED
+            self.bnt_theme.tooltip = "Modo Claro"
+
+        self.page.update()
+
+    def set_tema(self, tema):
+        if tema.find("LIGHT") >= 0 and self.page.theme_mode == ft.ThemeMode.DARK:
+            self.theme_changed(None)
+
+        if tema.find("DARK") >= 0 and self.page.theme_mode == ft.ThemeMode.LIGHT:
+            self.theme_changed(None)
+
     def generate_key_from_pin(self, pin: str) -> bytes:
         pin_bytes = pin.encode()
 
@@ -150,36 +169,66 @@ class PasswordManager:
             password_list: list[ft.Row] = []
             for name, password in self.password_list:
                 password_list.append(
-                    ft.Row(
-                        [
-                            ft.TextField(value=name),
-                            ft.Row(
-                                [
-                                    ft.TextField(
-                                        password=True,
-                                        can_reveal_password=True,
-                                        border="none",
-                                        value=password,
-                                    ),
-                                    ft.IconButton(
-                                        icon=ft.icons.CONTENT_COPY,
-                                        icon_size=20,
-                                        tooltip=_t("Copy"),
-                                        data=password,
-                                        on_click=self.copy_clipboard,
-                                    ),
-                                    ft.IconButton(
-                                        icon=ft.icons.DELETE_FOREVER_ROUNDED,
-                                        icon_size=20,
-                                        tooltip=_t("Delete"),
-                                        on_click=self.delete_password,
-                                        data=name,
-                                        on_blur=lambda e: print(e),
-                                    ),
-                                ]
-                            ),
-                        ],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    ft.Container(
+                        ft.ResponsiveRow(
+                            [
+                                ft.TextField(
+                                    value=name,
+                                    border="none",
+                                    col={"md": 6},
+                                    read_only=True,
+                                    height=40,
+                                    text_vertical_align=-1,
+                                ),
+                                ft.Stack(
+                                    [
+                                        ft.Container(
+                                            content=ft.TextField(
+                                                password=True,
+                                                can_reveal_password=True,
+                                                border="none",
+                                                value=password,
+                                                read_only=True,
+                                                multiline=False,
+                                                height=40,
+                                            ),
+                                            margin=ft.margin.only(right=70),
+                                        ),
+                                        ft.IconButton(
+                                            icon=ft.icons.CONTENT_COPY,
+                                            icon_size=20,
+                                            tooltip=_t("Copy"),
+                                            data=password,
+                                            on_click=self.copy_clipboard,
+                                            right=35,
+                                        ),
+                                        ft.IconButton(
+                                            on_focus=lambda e: print(e),
+                                            icon=ft.icons.DELETE_FOREVER_ROUNDED,
+                                            icon_size=20,
+                                            tooltip=_t("Delete"),
+                                            on_click=self.delete_password,
+                                            data=name,
+                                            right=5,
+                                        ),
+                                    ],
+                                    col={"md": 6},
+                                ),
+                            ],
+                            vertical_alignment=ft.MainAxisAlignment.CENTER,
+                        ),
+                        bgcolor=ft.colors.BLACK12,
+                        # shadow=ft.BoxShadow(
+                        #     spread_radius=0.01,
+                        #     blur_radius=10,
+                        #     color=ft.colors.BLACK38,
+                        #     blur_style=ft.ShadowBlurStyle.NORMAL,
+                        #     offset=ft.Offset(0, 5),
+                        # ),
+                        border_radius=10,
+                        padding=5,
+                        border=ft.border.all(1, ft.colors.BLACK),
+                        height=50,
                     )
                 )
 
@@ -370,7 +419,8 @@ class PasswordManager:
 
     def update_language(self, e):
         set_language(e.control.value)
-        self.run()
+        self.page.clean()
+        self.place_components()
 
         # Refresh language dropdown text
         self.language_dropdown.value = e.control.value
@@ -391,6 +441,13 @@ class PasswordManager:
                 scale=0.8,
                 on_change=self.update_language,
             )
+            self.bnt_theme = ft.IconButton(
+                icon=ft.icons.LIGHT_MODE_OUTLINED,
+                icon_size=20,
+                tooltip=_t("Light Mode"),
+                on_click=self.theme_changed,
+            )
+
             self.header = ft.Row(
                 [
                     self.language_dropdown,
@@ -404,13 +461,7 @@ class PasswordManager:
                         alignment=ft.alignment.center,
                     ),
                     ft.Container(
-                        content=(
-                            bnt_tema := ft.IconButton(
-                                icon=ft.icons.LIGHT_MODE_OUTLINED,
-                                icon_size=20,
-                                tooltip=_t("Light Mode"),
-                            )
-                        ),
+                        content=(self.bnt_theme),
                         alignment=ft.alignment.center_right,
                     ),
                 ],
@@ -448,6 +499,7 @@ class PasswordManager:
                 height=self.page.window_height - 300,
                 border=ft.border.all(1, ft.colors.BLACK),
                 border_radius=10,
+                expand=True,
             )
 
             self.bnt_add_password = ft.ElevatedButton(
@@ -455,10 +507,23 @@ class PasswordManager:
             )
             self.bnt_generate_random_password = ft.ElevatedButton(
                 text=_t("Generate Random"),
-                on_click=lambda e: self.generate_random_password(10),
+                on_click=lambda e: self.generate_random_password(
+                    int(self.password_size.value)
+                ),
             )
+            self.password_size = ft.Slider(
+                min=8, max=128, divisions=15, label="{value}", width=300, value=8
+            )
+
             self.out_botton_buttons = ft.Row(
-                [self.bnt_generate_random_password, self.bnt_add_password]
+                [
+                    ft.Row(
+                        [ft.Text(value=_t("Size")), self.password_size],
+                    ),
+                    self.bnt_generate_random_password,
+                    self.bnt_add_password,
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_EVENLY,
             )
 
             self.page.add(
